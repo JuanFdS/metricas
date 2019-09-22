@@ -30,21 +30,35 @@ import qualified GHC.TypeNats as N
 import GHC.Natural (naturalToInt)
 import Data.Type.Bool
 
-instance (MedidaCopada medida) => Show (Medicion medida) where
-  show unaMedicion@(Medicion unasUnidades) =
-    show (unasUnidades P./ multiplicadorDeUnidad unaMedicion) <> " " <> (nombreDeUnidad @ medida)
+data Medida where
+  Escalar :: Medida
+  MedidaSimple :: Symbol -> Symbol -> Medida
+  Producto :: [Medida] -> Medida
+  Division :: [Medida] -> Medida
 
-class UnidadNombrada medida where
+newtype Medicion (medida :: Medida) = Medicion { unidades :: Double } deriving (Eq, Ord)
+
+class UnidadDeMedida medida where
   nombreDeUnidad :: String
+  multiplicadorDeUnidad :: Double
 
-(#) :: a -> (a -> c) -> c
+instance (UnidadDeMedida medida) => Show (Medicion medida) where
+  show unaMedicion@(Medicion unasUnidades) =
+    show (unasUnidades P./ multiplicadorDeUnidad @medida) <> " " <> (nombreDeUnidad @medida)
+
 (#) = flip ($)
 
-instance (UnidadNombrada unaUnidad, UnidadNombrada otraUnidad) => UnidadNombrada (Producto [unaUnidad, otraUnidad]) where
-  nombreDeUnidad = nombreDeUnidad @unaUnidad <> " * " <> nombreDeUnidad @otraUnidad
+instance UnidadDeMedida (Producto '[]) where
+  nombreDeUnidad = mempty
+  multiplicadorDeUnidad = 1
 
-instance (UnidadNombrada unaUnidad, UnidadNombrada otraUnidad) => UnidadNombrada (Division [unaUnidad, otraUnidad]) where
-  nombreDeUnidad = nombreDeUnidad @unaUnidad <> " / " <> nombreDeUnidad @otraUnidad
+instance (UnidadDeMedida unidad, UnidadDeMedida (Producto (segundaUnidad ': otrasUnidades))) => UnidadDeMedida (Producto (primeraUnidad ': segundaUnidad ': otrasUnidades)) where
+  nombreDeUnidad = nombreDeUnidad @unidad <> " * " <> nombreDeUnidad @(Producto (segundaUnidad ': otrasUnidades))
+  multiplicadorDeUnidad = multiplicadorDeUnidad @unidad
+
+instance (UnidadDeMedida unaUnidad, UnidadDeMedida otraUnidad) => UnidadDeMedida (Division [unaUnidad, otraUnidad]) where
+  nombreDeUnidad = "(" <> nombreDeUnidad @unaUnidad <> " / " <> nombreDeUnidad @otraUnidad <> ")"
+  multiplicadorDeUnidad = (multiplicadorDeUnidad @unaUnidad) P./ (multiplicadorDeUnidad @otraUnidad)
 
 type family (*) a b :: Medida where
   (medida :: Medida) * (otraMedida :: Medida) = Producto [medida, otraMedida]
@@ -52,32 +66,50 @@ type family (*) a b :: Medida where
 type family (/) a b :: Medida where
   (medida :: Medida) / (otraMedida :: Medida) = Division [medida, otraMedida]
 
-instance UnidadNombrada Escalar where nombreDeUnidad = "escalar"
+instance UnidadDeMedida Escalar where
+  nombreDeUnidad = "escalar"
+  multiplicadorDeUnidad = 1
+
 escalar :: Double -> Medicion Escalar
 escalar = medicion
 
-type Metro = MedidaSimple "Distancia" 1000
-instance UnidadNombrada Metro where nombreDeUnidad = "metros"
+type Metro = MedidaSimple "Distancia" "Metro"
+instance UnidadDeMedida Metro where
+  nombreDeUnidad = "metros"
+  multiplicadorDeUnidad = 1
+
 metros :: Double -> Medicion Metro
 metros = medicion
 
-type Kilometro = MedidaSimple "Distancia" (1_000_000)
-instance UnidadNombrada Kilometro where nombreDeUnidad = "kilometros"
+type Kilometro = MedidaSimple "Distancia" "Kilometro"
+instance UnidadDeMedida Kilometro where
+  nombreDeUnidad = "kilometros"
+  multiplicadorDeUnidad = multiplicadorDeUnidad @Metro P.* 1000
+
 kilometros :: Double -> Medicion Kilometro
 kilometros = medicion
 
-type Segundo = MedidaSimple "Tiempo" 1
-instance UnidadNombrada Segundo where nombreDeUnidad = "segundos"
+type Segundo = MedidaSimple "Tiempo" "Segundo"
+instance UnidadDeMedida Segundo where
+  nombreDeUnidad = "segundos"
+  multiplicadorDeUnidad = 1
+
 segundos :: Double -> Medicion Segundo
 segundos = medicion
 
-type Minuto = MedidaSimple "Tiempo" 60
-instance UnidadNombrada Minuto where nombreDeUnidad = "minutos"
+type Minuto = MedidaSimple "Tiempo" "Minuto"
+instance UnidadDeMedida Minuto where
+  nombreDeUnidad = "minutos"
+  multiplicadorDeUnidad = multiplicadorDeUnidad @Segundo P.* 60
+
 minutos :: Double -> Medicion Minuto
 minutos = medicion
 
-type Hora = MedidaSimple "Tiempo" 3600
-instance UnidadNombrada Hora where nombreDeUnidad = "horas"
+type Hora = MedidaSimple "Tiempo" "Hora"
+instance UnidadDeMedida Hora where
+  nombreDeUnidad = "horas"
+  multiplicadorDeUnidad = multiplicadorDeUnidad @Minuto P.* 60
+
 horas :: Double -> Medicion Hora
 horas = medicion
 
@@ -92,11 +124,8 @@ metrosPorSegundo = medicion
 -- TODO: agregar horas
 -- TODO: agregar kilometros por hora
 
-cantidad :: forall medida. (MedidaCopada medida) => Medicion medida -> Double
-cantidad unaMedicion = unidades unaMedicion P./ multiplicadorDeUnidad unaMedicion
-
-multiplicadorDeUnidad :: forall medida. (MedidaCopada medida) => Medicion medida -> Double
-multiplicadorDeUnidad _ = doubleFromNat @(Unidades medida)
+cantidad :: forall medida. (UnidadDeMedida medida) => Medicion medida -> Double
+cantidad unaMedicion = unidades unaMedicion P./ multiplicadorDeUnidad @medida
 
 doubleFromNat :: forall (nat :: Nat) . KnownNat nat => Double
 doubleFromNat = fromIntegral $ nat @nat
@@ -104,12 +133,10 @@ doubleFromNat = fromIntegral $ nat @nat
 nat :: forall (nat :: Nat) . KnownNat nat => Int
 nat = naturalToInt . N.natVal $ Proxy @nat
 
-newtype Medicion medida = Medicion { unidades :: Double } deriving (Eq, Ord)
+medicion :: forall medida. (UnidadDeMedida medida) => Double -> Medicion medida
+medicion unasUnidades = Medicion (unasUnidades P.* multiplicadorDeUnidad @medida)
 
-medicion :: forall medida. (MedidaCopada medida) => Double -> Medicion medida
-medicion unasUnidades = Medicion (unasUnidades P.* doubleFromNat @(Unidades medida))
-
-pasarA :: forall b a. (MismaDimension a b, MedidaCopada a, MedidaCopada b) => Medicion a -> Medicion b
+pasarA :: forall b a. (MismaDimension a b, UnidadDeMedida a, UnidadDeMedida b) => Medicion a -> Medicion b
 pasarA unaMedicion = Medicion (unidades unaMedicion)
 
 infixl 1 -
@@ -117,16 +144,16 @@ infixl 1 +
 infixl 2 *
 infixl 2 /
 
-(-) :: forall a b. (MismaDimension b a, MedidaCopada a, MedidaCopada b) => Medicion a -> Medicion b -> Medicion a
+(-) :: forall a b. (MismaDimension b a, UnidadDeMedida a, UnidadDeMedida b) => Medicion a -> Medicion b -> Medicion a
 (-) unaMedicion otraMedicion = unaMedicion `restar` (pasarA otraMedicion :: Medicion a)
 
-(+) :: forall a b. (MismaDimension b a, MedidaCopada a, MedidaCopada b) => Medicion a -> Medicion b -> Medicion a
+(+) :: forall a b. (MismaDimension b a, UnidadDeMedida a, UnidadDeMedida b) => Medicion a -> Medicion b -> Medicion a
 (+) unaMedicion otraMedicion = unaMedicion `sumar` (pasarA otraMedicion :: Medicion a)
 
-(*) :: forall a b. (MedidaCopada a, MedidaCopada b) => Medicion a -> Medicion b -> Medicion (Producto [a, b])
+(*) :: forall a b. (UnidadDeMedida a, UnidadDeMedida b) => Medicion a -> Medicion b -> Medicion (Por a b)
 (*) unaMedicion otraMedicion = Medicion (unidades unaMedicion P.* unidades otraMedicion)
 
-(/) :: forall a b. (MedidaCopada a, MedidaCopada b) => Medicion a -> Medicion b -> Medicion (Dividir a b)
+(/) :: forall a b. (UnidadDeMedida a, UnidadDeMedida b) => Medicion a -> Medicion b -> Medicion (Dividir a b)
 (/) unaMedicion otraMedicion = Medicion (unidades unaMedicion P./ unidades otraMedicion)
 
 restar :: Medicion a -> Medicion a -> Medicion a
@@ -134,8 +161,6 @@ restar unaMedicion otraMedicion = Medicion $ unidades unaMedicion P.- unidades o
 
 sumar :: Medicion a -> Medicion a -> Medicion a
 sumar unaMedicion otraMedicion = Medicion $ unidades unaMedicion P.+ unidades otraMedicion
-
-type MedidaCopada a = (UnidadNombrada a, KnownNat (Unidades a))
 
 class IffC b t f => Iff (b :: Bool) (t :: Constraint) (f :: Constraint) where
   type IffC b t f :: Constraint
@@ -191,12 +216,6 @@ type family Insert' b x y ys where
   Insert' 'LT  x y ys = x ': (y ': ys)
   Insert' _    x y ys = y ': Insert x ys
 
-type family Unidades (medida :: Medida) :: Nat where
-  Unidades Escalar = 1
-  Unidades (MedidaSimple _ cantidad) = cantidad
-  Unidades (Producto [unaMedida, otraMedida]) = Unidades unaMedida N.* Unidades otraMedida
-  Unidades (Division [unaMedida, otraMedida]) = N.Div (Unidades unaMedida) (Unidades otraMedida)
-
 type family Dividir (medida :: Medida) (otraMedida :: Medida) :: Medida where
   Dividir medida medida = Escalar
   Dividir (Producto [unaMedida, otraMedida]) unaMedida = otraMedida
@@ -204,8 +223,11 @@ type family Dividir (medida :: Medida) (otraMedida :: Medida) :: Medida where
   Dividir (Division [unaMedida, otraMedida]) unaMedida = Escalar / otraMedida
   Dividir unaMedida otraMedida = If (TienenMismasDimensiones unaMedida otraMedida) Escalar (Division [unaMedida, otraMedida])
 
-data Medida where
-   Escalar :: Medida
-   MedidaSimple :: Symbol -> Nat -> Medida
-   Producto :: [Medida] -> Medida
-   Division :: [Medida] -> Medida
+type family Por (medida :: Medida) (otraMedida :: Medida) :: Medida where
+  Por Escalar medida = medida
+  Por medida Escalar = medida
+  Por (Division [numerador, denominador]) medida =
+    If (TienenMismasDimensiones denominador medida)
+          numerador
+          (Division [numerador, Por denominador medida])
+  Por medida otraMedida = Producto [medida, otraMedida]

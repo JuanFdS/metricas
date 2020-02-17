@@ -24,6 +24,7 @@ dependencies:
 - pdeprelude
 - vector-sized
 - units
+- type-spec
 
 default-extensions:
   - NoImplicitPrelude
